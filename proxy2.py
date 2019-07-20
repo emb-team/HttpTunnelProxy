@@ -20,50 +20,51 @@ def connect_to_host(client):
     try:
         readable, writable, exceptional = select.select([client], [], [], 5)
         if not readable and not writable and not exceptional:
-            print "timeout occured"
+            print ": Select timeout occured"
             return -1
 
         for c in readable:
             if c is client:
                 data = client.recv(10000)
                 if not data:
-                    print ": No Data available for reading/closed connection"
+                    print ": no data available for reading/closed connection"
                     return -1
 
     except socket.error:
-        print "Socket error"
+        print ": Socket error occured"
         return -1
-    except scoket.timeout:
-        print "socket timeout"
+    except socket.timeout:
+        print ": Socket timeout occured"
         return -1
  
     if not data:
-        print "how come?"
+        print ": Received empty buffer. Exiting..."
+        return -1
 
     try:
         request_line, headers_alone = data.split("\r\n", 1)
     except:
-        print "->> Can't slpit the requst line"
-        print data
+        print ": Can't split the request line: " + data
         return -1
 
     command = request_line.split()
     print_debug(command)
  
     if command[0] != "CONNECT" and command[0] != "POST" and command[0] != "GET":
-        print "NO CONNECT OR POST OR GET COMMAND!"
+        print ": Wrong command i Http request (not CONNECT/POST/GET): " + command[0]
         return -1
 
     server = socket.socket()
 
     if command[0] == "POST" or command[0] == "GET":
         address = command[1].split("/")
-        print address
-        print_debug("Opened connection with " + address[2] + " port " + "80")
+        print_debug(address)
+ 
         try:
             server.connect((address[2], 80))
         except:
-            response = "\r\n\r\n" + command[2] + " 400 Bad Request\r\n\r\n"
+            msg = "<html><body> <h2> The host " + address[2] + " not found. </h2> </body></html>"
+            response = "\r\n\r\n" + command[2] + " 400\r\nContent-length: " + str(len(msg)) + "\r\n\r\n" + msg
             print_debug(response)
             client.sendall(response)
             server.close()
@@ -77,13 +78,14 @@ def connect_to_host(client):
         try:
             server.connect((address[0], int(address[1])))
         except:
-            response = "\r\n\r\n" + command[2] + " 400 Bad Request\r\n\r\n"
+            msg = "<html><body> <h2> The host " + address[2] + " not found. </h2> </body></html>"
+            response = "\r\n\r\n" + command[2] + " 400\r\nContent-length: " + str(len(msg)) + "\r\n\r\n" + msg
             print_debug(response)
             client.sendall(response)
             server.close()
             return -1
 
-        response = "\r\n\r\n" + command[2] + " 200 OK\r\n\r\n"
+        response = "\r\n\r\n" + "HTTP/2.0" + " 200\r\n\r\n"
         print_debug(response)
         client.sendall(response)
 
@@ -92,7 +94,7 @@ def connect_to_host(client):
 
 MAX_BYTES=10000
 
-def thread1(client):
+def proxy_thread(client):
 
     server = connect_to_host(client)
     if server == -1:
@@ -105,7 +107,7 @@ def thread1(client):
 
             readable, writable, exceptional = select.select([client, server], [], [], 5)
             if not readable and not writable and not exceptional:
-                print "Timeout in loop!"
+                print ": Select timeout in main loop"
                 server.close()
                 client.close()
                 return
@@ -123,7 +125,7 @@ def thread1(client):
                 continue;
         except socket.error, e:
             print e.args[0]
-            print "closed channel"
+            print ": Socket error occured"
             server.close()
             client.close()
             return
@@ -138,11 +140,6 @@ if __name__ == "__main__":
         client, addr = sock.accept()
  
         threads = list()
-        x = threading.Thread(target=thread1, args=(client,))
+        x = threading.Thread(target=proxy_thread, args=(client,))
         x.start()
         threads.append(x)
-        #thread1(client, server)
-
-        #server.close()
-        #client.close()
-        continue
