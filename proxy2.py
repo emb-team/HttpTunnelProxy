@@ -9,10 +9,15 @@ import threading
 import select
 import sys
 
-debug = 1
+debug = 0
+error = 1
 
 def print_debug(msg):
     if debug:
+        print msg
+
+def print_error(msg):
+    if error:
         print msg
 
 def connect_to_host(client):
@@ -20,38 +25,38 @@ def connect_to_host(client):
     try:
         readable, writable, exceptional = select.select([client], [], [], 5)
         if not readable and not writable and not exceptional:
-            print ": Select timeout occured"
+            print_error(": Select timeout occured")
             return -1
 
         for c in readable:
             if c is client:
                 data = client.recv(10000)
                 if not data:
-                    print ": no data available for reading/closed connection"
+                    print_error(": no data available for reading/closed connection")
                     return -1
 
     except socket.error:
-        print ": Socket error occured"
+        print_error(": Socket error occured")
         return -1
     except socket.timeout:
-        print ": Socket timeout occured"
+        print_error(": Socket timeout occured")
         return -1
  
     if not data:
-        print ": Received empty buffer. Exiting..."
+        print_error(": Received empty buffer. Exiting...")
         return -1
 
     try:
         request_line, headers_alone = data.split("\r\n", 1)
     except:
-        print ": Can't split the request line: " + data
+        print_error(": Can't split the request line: " + data)
         return -1
 
     command = request_line.split()
     print_debug(command)
  
     if command[0] != "CONNECT" and command[0] != "POST" and command[0] != "GET":
-        print ": Wrong command i Http request (not CONNECT/POST/GET): " + command[0]
+        print_error(": Wrong command in Http request (not CONNECT/POST/GET): " + command[0])
         return -1
 
     server = socket.socket()
@@ -59,7 +64,7 @@ def connect_to_host(client):
     if command[0] == "POST" or command[0] == "GET":
         address = command[1].split("/")
         print_debug(address)
- 
+        print_debug("Opened connection with " + address[2] + " port " + "80")
         try:
             server.connect((address[2], 80))
         except:
@@ -89,7 +94,6 @@ def connect_to_host(client):
         print_debug(response)
         client.sendall(response)
 
-    print_debug("end")
     return server
 
 MAX_BYTES=10000
@@ -98,7 +102,7 @@ def proxy_thread(client):
 
     server = connect_to_host(client)
     if server == -1:
-        print "connect_to_host() failed"
+        print_error(": connect_to_host() failed")
         client.close()
         return
 
@@ -107,7 +111,7 @@ def proxy_thread(client):
 
             readable, writable, exceptional = select.select([client, server], [], [], 5)
             if not readable and not writable and not exceptional:
-                print ": Select timeout in main loop"
+                print_error(": Select timeout in main loop")
                 server.close()
                 client.close()
                 return
@@ -122,10 +126,8 @@ def proxy_thread(client):
                     #print_debug("client:" +data[0:10])
                     server.sendall(data)
 
-                continue;
-        except socket.error, e:
-            print e.args[0]
-            print ": Socket error occured"
+        except socket.error:
+            print_error(": Socket error occured")
             server.close()
             client.close()
             return
