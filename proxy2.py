@@ -8,9 +8,11 @@ import zlib
 import threading
 import select
 import sys
+import signal
 
 debug = 0
 error = 1
+
 
 def print_debug(msg):
     if debug:
@@ -20,27 +22,14 @@ def print_error(msg):
     if error:
         print msg
 
+MAX_BYTES=10000
+
 def connect_to_host(client):
-    data = ""
     try:
-        readable, writable, exceptional = select.select([client], [], [], 5)
-        if not readable and not writable and not exceptional:
-            print_error(": Select timeout occured")
-            return -1
-
-        for c in readable:
-            if c is client:
-                data = client.recv(10000)
-                if not data:
-                    print_error(": no data available for reading/closed connection")
-                    return -1
-
+        data = client.recv(MAX_BYTES)
     except socket.error:
-        print_error(": Socket error occured")
-        return -1
-    except socket.timeout:
-        print_error(": Socket timeout occured")
-        return -1
+        print_error(": Socket.recv() exception")
+        retutn -1
  
     if not data:
         print_error(": Received empty buffer. Exiting...")
@@ -83,7 +72,7 @@ def connect_to_host(client):
         try:
             server.connect((address[0], int(address[1])))
         except:
-            msg = "<html><body> <h2> The host " + address[2] + " not found. </h2> </body></html>"
+            msg = "<html><body> <h2> The host " + address[0] + " not found. </h2> </body></html>"
             response = "\r\n\r\n" + command[2] + " 400\r\nContent-length: " + str(len(msg)) + "\r\n\r\n" + msg
             print_debug(response)
             client.sendall(response)
@@ -96,52 +85,158 @@ def connect_to_host(client):
 
     return server
 
-MAX_BYTES=10000
-
-def proxy_thread(client):
-
-    server = connect_to_host(client)
-    if server == -1:
-        print_error(": connect_to_host() failed")
-        client.close()
-        return
+def handler_thread(q):
 
     while True:
-        try:
+        data, evt = q.get(1)
+        evt.set()
+        q.task_done()
 
-            readable, writable, exceptional = select.select([client, server], [], [], 5)
-            if not readable and not writable and not exceptional:
-                print_error(": Select timeout in main loop")
-                server.close()
-                client.close()
-                return
-
-            for s in readable:
-                if s is server:
-                    data = server.recv(MAX_BYTES)
-                    #print_debug("server:" + data[0:10])
-                    client.sendall(data)
-                if s is client:
-                    data = client.recv(MAX_BYTES)
-                    #print_debug("client:" +data[0:10])
-                    server.sendall(data)
-
-        except socket.error:
-            print_error(": Socket error occured")
-            server.close()
-            client.close()
+        if str(data) == "exit":
             return
 
+        client = int(data)
+
+    return
+
+exit_flag = 0
+
+def signal_handler(signal, frame):
+
+    global exit_flag
+    exit_flag = 1
+
+    if debug:
+        import pdb
+        pdb.set_trace()
+
 if __name__ == "__main__":
+
+    signal.signal(signal.SIGINT, signal_handler)
 
     sock = socket.socket()
     sock.bind(("", 8080))
     sock.listen(1)
 
+    epoll = select.epoll()
+    epoll.register(sock.fileno(), select.POLLIN)
+
+    connections = {}
+
+    connections[sock.fileno()] = sock
+
     while True:
-        client, addr = sock.accept()
+        if exit_flag:
+            for item in list(connections):
+                s = connections[item]
+                del connections[item]
+                epoll.unregister(s.fileno())
+                s.close()
+
+            epoll.close()
+            sock.close()
+            print_error("Server has been closed. Exiting...")
+            sys.exit()
+
+        try:
+            events = epoll.poll()
+            for fileno, event in events:
+                if fileno == sock.fileno():
+                    try:
+                        client, addr = sock.accept()
+                        client.setblocking(0)
+                        epoll.register(client.fileno(), select.EPOLLIN | select.EPOLLHUP)
+                        connections[client.fileno()] = client
+
+                    except socket.error:
+                        print_error(": socket.accept() failed.")
+                        pass
+
+                elif event & select.POLLIN:
+                    try:
+                        client = connections[fileno]
+                    except:
+                        print  "fileno " + str(fileno)
+                        epoll.unregister(fileno)
+                        continue
+
+                    if fileno == client.fileno():
+                        server = connect_to_host(client)
+                        if server == -1:
+                            print_error(": connect_to_host() failed")
+                            epoll.unregister(client.fileno())
+                            connections[client.fileno()] = 0
+                            del connections[client.fileno()]
+                            client.close()
+                            continue
+
+                        server.setblocking(0)
+
+                        epoll.register(server.fileno(), select.EPOLLIN | select.EPOLLHUP)
+
+                        connections[client.fileno()] = server
+                        connections[server.fileno()] = client
+                        continue
+
+                    server = connections[client.fileno()]
+
+                    if fileno != server.fileno():
+                        print_error("Sockets data are not equal: " + str(fileno) + " = " + str(server.fileno()))
+                        continue
  
-        threads = list()
-        x = threading.Thread(target=proxy_thread, args=(client,))
-        x.start()
-        threads.append(x)
+                    try:
+                        data = server.recv(MAX_BYTES)
+                        if not data:
+                            epoll.unregister(client.fileno())
+                            epoll.unregister(server.fileno())
+                            connections[client.fileno()] = 0
+                            connections[server.fileno()] = 0
+                            del connections[client.fileno()]
+                            del connections[server.fileno()]
+                            client.close()
+                            server.close()
+                            continue
+                        client.sendall(data)
+                    except socket.error:
+                        epoll.unregister(client.fileno())
+                        epoll.unregister(server.fileno())
+                        connections[client.fileno()] = 0
+                        connections[server.fileno()] = 0
+                        del connections[client.fileno()]
+                        del connections[server.fileno()]
+                        client.close()
+                        server.close()
+                        pass
+
+                elif event & select.POLLHUP:
+                    try:
+                        print_debug("select.POLLHUP")
+                        client = connections[fileno]
+                        server = connections[client.fileno()]
+
+                        if fileno != server.fileno():
+                            print_error("i :Sockets data are not equal: " + str(fileno) + " = " + str(server.fileno()))
+                            continue
+
+                        epoll.unregister(client.fileno())
+                        epoll.unregister(server.fileno())
+                        connections[client.fileno()] = 0
+                        connections[server.fileno()] = 0
+                        del connections[client.fileno()]
+                        del connections[server.fileno()]
+                        client.close()
+                        server.close()
+                    except socket.error:
+                        print_error(": socket.close() failed")
+                        pass
+        except:
+            for item in list(connections):
+                s = connections[item]
+                del connections[item]
+                epoll.unregister(s.fileno())
+                s.close()
+
+            epoll.close()
+            sock.close()
+            print_error("Server has been closed. Exiting...")
+            sys.exit()
