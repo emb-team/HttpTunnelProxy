@@ -134,6 +134,20 @@ def terminate_server(server, epoll, connections):
         return -1
     return 0
 
+def delete_pair(server, client, connections):
+    try:
+        epoll.unregister(client.fileno())
+        epoll.unregister(server.fileno())
+        connections[client.fileno()] = 0
+        connections[server.fileno()] = 0
+        del connections[client.fileno()]
+        del connections[server.fileno()]
+        client.close()
+        server.close()
+    except:
+        print_error(": Fail to delete pair from connections...")
+        return -1
+
 if __name__ == "__main__":
 
     signal.signal(signal.SIGINT, signal_handler)
@@ -172,7 +186,7 @@ if __name__ == "__main__":
                     try:
                         client = connections[fileno]
                     except:
-                        print  "fileno " + str(fileno)
+                        print_eror("fileno " + str(fileno))
                         epoll.unregister(fileno)
                         continue
 
@@ -203,25 +217,11 @@ if __name__ == "__main__":
                     try:
                         data = server.recv(MAX_BYTES)
                         if not data:
-                            epoll.unregister(client.fileno())
-                            epoll.unregister(server.fileno())
-                            connections[client.fileno()] = 0
-                            connections[server.fileno()] = 0
-                            del connections[client.fileno()]
-                            del connections[server.fileno()]
-                            client.close()
-                            server.close()
+                            delete_pair(server, client, connections)
                             continue
                         client.sendall(data)
                     except socket.error:
-                        epoll.unregister(client.fileno())
-                        epoll.unregister(server.fileno())
-                        connections[client.fileno()] = 0
-                        connections[server.fileno()] = 0
-                        del connections[client.fileno()]
-                        del connections[server.fileno()]
-                        client.close()
-                        server.close()
+                        delete_pair(server, client, connections)
                         pass
 
                 elif event & select.POLLHUP:
@@ -234,14 +234,7 @@ if __name__ == "__main__":
                             print_error("i :Sockets data are not equal: " + str(fileno) + " = " + str(server.fileno()))
                             continue
 
-                        epoll.unregister(client.fileno())
-                        epoll.unregister(server.fileno())
-                        connections[client.fileno()] = 0
-                        connections[server.fileno()] = 0
-                        del connections[client.fileno()]
-                        del connections[server.fileno()]
-                        client.close()
-                        server.close()
+                        delete_pair(server, client, connections)
                     except socket.error:
                         print_error(": socket.close() failed")
                         pass
