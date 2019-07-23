@@ -31,7 +31,7 @@ def handle_request(server, client, command):
             return -1
 
         print_debug(address)
-        print_debug("Opened connection with " + address[2] + " port " + "80")
+        print_debug(": Opened connection with " + address[2] + " port " + "80")
 
         try:
             server.connect((address[2], 80))
@@ -51,7 +51,7 @@ def handle_request(server, client, command):
             print_error(": Can't split command and get address of the host " + command)
             return -1
 
-        print_debug("Opened connection with " + address[0] + " port " + address[1])
+        print_debug(": Opened connection with " + address[0] + " port " + address[1])
 
         try:
             server.connect((address[0], int(address[1])))
@@ -128,9 +128,9 @@ def terminate_server(server, epoll, connections):
 
         epoll.close()
         server.close()
-        print_error("Server has been closed. Exiting...")
+        print_error(": Server has been closed. Exiting...")
     except:
-        print_error("Server had troubles to finish sucessfully. Exiting...")
+        print_error(": Server had troubles to finish sucessfully. Exiting...")
         return -1
     return 0
 
@@ -186,7 +186,7 @@ if __name__ == "__main__":
                     try:
                         client = connections[fileno]
                     except:
-                        print_eror("fileno " + str(fileno))
+                        print_eror(": POLLIN event for removed fileno " + str(fileno))
                         epoll.unregister(fileno)
                         continue
 
@@ -211,7 +211,7 @@ if __name__ == "__main__":
                     server = connections[client.fileno()]
 
                     if fileno != server.fileno():
-                        print_error("Sockets data are not equal: " + str(fileno) + " = " + str(server.fileno()))
+                        print_error(": Sockets data are not equal: " + str(fileno) + " = " + str(server.fileno()))
                         continue
 
                     try:
@@ -226,12 +226,12 @@ if __name__ == "__main__":
 
                 elif event & select.POLLHUP:
                     try:
-                        print_debug("select.POLLHUP")
+                        print_debug(": select.POLLHUP")
                         client = connections[fileno]
                         server = connections[client.fileno()]
 
                         if fileno != server.fileno():
-                            print_error("i :Sockets data are not equal: " + str(fileno) + " = " + str(server.fileno()))
+                            print_error(": Sockets data are not equal: " + str(fileno) + " = " + str(server.fileno()))
                             continue
 
                         delete_pair(server, client, connections)
