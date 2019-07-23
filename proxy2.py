@@ -78,7 +78,7 @@ def connect_to_host(client):
         retutn -1
 
     if not data:
-        print_error(": Received empty buffer. Exiting...")
+        print_error(": Received empty buffer. Skipping...")
         return -1
 
     try:
@@ -186,7 +186,7 @@ if __name__ == "__main__":
                     try:
                         client = connections[fileno]
                     except:
-                        print_eror(": POLLIN event for removed fileno " + str(fileno))
+                        print_error(": POLLIN event for removed fileno " + str(fileno))
                         epoll.unregister(fileno)
                         continue
 
