@@ -4,7 +4,7 @@ import email
 import io
 import pprint
 import time
-import zlib 
+import zlib
 import threading
 import select
 import sys
@@ -22,38 +22,17 @@ def print_error(msg):
     if error:
         print msg
 
-MAX_BYTES=10000
-
-def connect_to_host(client):
-    try:
-        data = client.recv(MAX_BYTES)
-    except socket.error:
-        print_error(": Socket.recv() exception")
-        retutn -1
- 
-    if not data:
-        print_error(": Received empty buffer. Exiting...")
-        return -1
-
-    try:
-        request_line, headers_alone = data.split("\r\n", 1)
-    except:
-        print_error(": Can't split the request line: " + data)
-        return -1
-
-    command = request_line.split()
-    print_debug(command)
- 
-    if command[0] != "CONNECT" and command[0] != "POST" and command[0] != "GET":
-        print_error(": Wrong command in Http request (not CONNECT/POST/GET): " + command[0])
-        return -1
-
-    server = socket.socket()
-
+def handle_request(server, client, command):
     if command[0] == "POST" or command[0] == "GET":
-        address = command[1].split("/")
+        try:
+            address = command[1].split("/")
+        except:
+            print_error(": Can't split command and get address of the host " + command)
+            return -1
+
         print_debug(address)
         print_debug("Opened connection with " + address[2] + " port " + "80")
+
         try:
             server.connect((address[2], 80))
         except:
@@ -65,10 +44,15 @@ def connect_to_host(client):
             return -1
 
         server.sendall(data)
+    elif command[0] == "CONNECT":
+        try:
+            address = command[1].split(":")
+        except:
+            print_error(": Can't split command and get address of the host " + command)
+            return -1
 
-    if command[0] == "CONNECT":
-        address = command[1].split(":")
         print_debug("Opened connection with " + address[0] + " port " + address[1])
+
         try:
             server.connect((address[0], int(address[1])))
         except:
@@ -83,21 +67,45 @@ def connect_to_host(client):
         print_debug(response)
         client.sendall(response)
 
-    return server
 
-def handler_thread(q):
+MAX_BYTES=10000
 
-    while True:
-        data, evt = q.get(1)
-        evt.set()
-        q.task_done()
+def connect_to_host(client):
+    try:
+        data = client.recv(MAX_BYTES)
+    except socket.error:
+        print_error(": Socket.recv() exception")
+        retutn -1
 
-        if str(data) == "exit":
-            return
+    if not data:
+        print_error(": Received empty buffer. Exiting...")
+        return -1
 
-        client = int(data)
+    try:
+        request_line, headers_alone = data.split("\r\n", 1)
+    except:
+        print_error(": Can't split the request: " + data)
+        return -1
 
-    return
+    try:
+        command = request_line.split()
+    except:
+        print_error(": Can't split the request line: " + request_line)
+        return -1
+
+    print_debug(command)
+
+    if command[0] != "CONNECT" and command[0] != "POST" and command[0] != "GET":
+        print_error(": Wrong command in Http request (not CONNECT/POST/GET): " + command[0])
+        return -1
+
+    server = socket.socket()
+
+    ret = handle_request(server, client, command)
+    if ret:
+        return ret
+    else:
+        return server
 
 exit_flag = 0
 
@@ -109,6 +117,22 @@ def signal_handler(signal, frame):
     if debug:
         import pdb
         pdb.set_trace()
+
+def terminate_server(server, epoll, connections):
+    try:
+        for item in list(connections):
+            s = connections[item]
+            del connections[item]
+            epoll.unregister(s.fileno())
+            s.close()
+
+        epoll.close()
+        server.close()
+        print_error("Server has been closed. Exiting...")
+    except:
+        print_error("Server had troubles to finish sucessfully. Exiting...")
+        return -1
+    return 0
 
 if __name__ == "__main__":
 
@@ -127,16 +151,8 @@ if __name__ == "__main__":
 
     while True:
         if exit_flag:
-            for item in list(connections):
-                s = connections[item]
-                del connections[item]
-                epoll.unregister(s.fileno())
-                s.close()
-
-            epoll.close()
-            sock.close()
-            print_error("Server has been closed. Exiting...")
-            sys.exit()
+            ret = terminate_server(sock, epoll, connections)
+            sys.exit(ret)
 
         try:
             events = epoll.poll()
@@ -183,7 +199,7 @@ if __name__ == "__main__":
                     if fileno != server.fileno():
                         print_error("Sockets data are not equal: " + str(fileno) + " = " + str(server.fileno()))
                         continue
- 
+
                     try:
                         data = server.recv(MAX_BYTES)
                         if not data:
@@ -230,13 +246,5 @@ if __name__ == "__main__":
                         print_error(": socket.close() failed")
                         pass
         except:
-            for item in list(connections):
-                s = connections[item]
-                del connections[item]
-                epoll.unregister(s.fileno())
-                s.close()
-
-            epoll.close()
-            sock.close()
-            print_error("Server has been closed. Exiting...")
-            sys.exit()
+            ret = terminate_server(sock, epoll, connections)
+            sys.exit(ret)
