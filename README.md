@@ -1,4 +1,4 @@
-HTTP Proxy Tunnel implementation
+HTTP Tunnel Proxy implementation
 
 The script setups HTTP Tunnel Proxy and redirects all trafic according to incoming request. Tested on Mozilla Firefox.
 
